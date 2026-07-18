@@ -14,5 +14,6 @@ enum GitErrorCode: string
     case RateLimited = 'rate_limited';
     case Cancelled = 'cancelled';
     case Unsupported = 'unsupported';
+    case InvalidArgument = 'invalid_argument';
     case Unknown = 'unknown';
 }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FancyGit;
 
+use FancyGit\Error\GitErrorCode;
+use FancyGit\Error\GitException;
 use FancyGit\Model\Commit;
 use FancyGit\Model\FileChange;
 use FancyGit\Model\OperationProposal;
@@ -79,6 +81,7 @@ final class GitRepository
         $format = implode(self::FIELD, ['%H', '%h', '%P', '%an', '%ae', '%aI', '%s']).self::RECORD;
         $args = ['log', "--format={$format}", "--max-count={$limit}", "--skip={$skip}"];
         if ($ref !== null) {
+            self::assertNotOption($ref, 'log ref');
             $args[] = $ref;
         }
 
@@ -122,6 +125,7 @@ final class GitRepository
         }
         foreach ([$from, $to] as $ref) {
             if ($ref !== null) {
+                self::assertNotOption($ref, 'diff ref');
                 $args[] = $ref;
             }
         }
@@ -153,6 +157,7 @@ final class GitRepository
 
     public function checkout(string $target, bool $propose = false, ?float $timeout = null): ?OperationProposal
     {
+        self::assertNotOption($target, 'checkout target');
         if ($propose) {
             return new OperationProposal('checkout', ['target' => $target], "Check out {$target}");
         }
@@ -163,6 +168,7 @@ final class GitRepository
 
     public function fetch(string $remote = 'origin', bool $propose = false, ?float $timeout = null): ?OperationProposal
     {
+        self::assertSafeRemote($remote);
         if ($propose) {
             return new OperationProposal('fetch', ['remote' => $remote], "Fetch {$remote}");
         }
@@ -173,6 +179,12 @@ final class GitRepository
 
     public function pull(?string $remote = null, ?string $branch = null, bool $propose = false, ?float $timeout = null): ?OperationProposal
     {
+        if ($remote !== null) {
+            self::assertSafeRemote($remote);
+        }
+        if ($branch !== null) {
+            self::assertNotOption($branch, 'branch');
+        }
         if ($propose) {
             return new OperationProposal('pull', ['remote' => $remote, 'branch' => $branch], 'Pull remote changes');
         }
@@ -189,6 +201,10 @@ final class GitRepository
 
     public function push(string $remote = 'origin', ?string $branch = null, bool $propose = false, ?float $timeout = null): ?OperationProposal
     {
+        self::assertSafeRemote($remote);
+        if ($branch !== null) {
+            self::assertNotOption($branch, 'branch');
+        }
         if ($propose) {
             return new OperationProposal('push', ['remote' => $remote, 'branch' => $branch], "Push to {$remote}");
         }
@@ -203,7 +219,36 @@ final class GitRepository
 
     private function git(array $args, ?float $timeout): string
     {
-        return $this->runner->run(['git', '-C', $this->directory, '--no-pager', ...$args], $timeout)->stdout;
+        // Defense in depth: disable the `ext::` remote helper for every
+        // invocation so a transport helper can never execute a command even if
+        // a future call path forgets to validate its remote.
+        return $this->runner->run(['git', '-c', 'protocol.ext.allow=never', '-C', $this->directory, '--no-pager', ...$args], $timeout)->stdout;
+    }
+
+    /**
+     * These packages are agent-driven: refs and remotes can be supplied by an
+     * untrusted caller, so a value git would parse as an option (e.g.
+     * `--output=/path`, `--upload-pack=<cmd>`) must never reach it as a
+     * positional argument.
+     */
+    private static function assertNotOption(string $value, string $label): void
+    {
+        if (str_starts_with($value, '-')) {
+            throw new GitException(GitErrorCode::InvalidArgument, "Refusing {$label} that resembles a command-line option: {$value}");
+        }
+    }
+
+    /**
+     * Reject a remote using a git remote-helper transport that can execute a
+     * local command (`ext::sh -c …`, `fd::…`) — the classic git-wrapper RCE —
+     * on top of the option check.
+     */
+    private static function assertSafeRemote(string $remote, string $label = 'remote'): void
+    {
+        self::assertNotOption($remote, $label);
+        if (preg_match('/^(ext|fd)::/i', $remote) === 1) {
+            throw new GitException(GitErrorCode::InvalidArgument, "Refusing {$label} using a disallowed transport helper: {$remote}");
+        }
     }
 
     private function change(string $code): ?string

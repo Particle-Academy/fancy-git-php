@@ -31,17 +31,35 @@ final class GitException extends RuntimeException
         return new self($code, $output, $exitCode);
     }
 
+    /**
+     * Remove credentials by their SHAPE or their CONTEXT — never simply the word
+     * after "token" or "password". That rule blanked ordinary provider text
+     * ("Token scope insufficient" became "[REDACTED] insufficient") while missing
+     * a bare `PRIVATE-TOKEN: …` header, `Authorization: Basic …`, a
+     * `private_token=` query parameter, GitLab's non-PAT tokens and GitHub
+     * fine-grained PATs entirely.
+     *
+     * Kept identical to `redactSecrets()` in fancy-git-js; both suites read the
+     * same `tests/fixtures/redaction-cases.json`.
+     */
     public static function redact(string $message): string
     {
-        return preg_replace(
-            [
-                '/gh[pousr]_[A-Za-z0-9_]{20,}/',
-                '/glpat-[A-Za-z0-9_-]{20,}/',
-                '/(?:Bearer|token|password)\s+[^\s]+/i',
-                '/https?:\/\/[^\/@\s]+@/',
-            ],
-            '[REDACTED]',
-            $message,
-        ) ?? $message;
+        $patterns = [
+            // Credential headers: keep the header name and auth scheme, drop the value.
+            '/\b((?:proxy-)?authorization\s*:\s*(?:(?:bearer|basic|token)\s+)?)[^\s,;\'"]+/i' => '${1}[REDACTED]',
+            '/\b((?:private|job|deploy)-token\s*:\s*)[^\s,;\'"]+/i' => '${1}[REDACTED]',
+            // A credential in a query string or an assignment: private_token=, access_token=, password=, client_secret=.
+            '/\b([\w-]*(?:token|password|passwd|secret)=)[^\s&#,;\'"]+/i' => '${1}[REDACTED]',
+            // Host-issued token shapes, wherever they appear.
+            '/gh[pousr]_[A-Za-z0-9_]{20,}/' => '[REDACTED]',
+            '/github_pat_[A-Za-z0-9_]{20,}/' => '[REDACTED]',
+            '/gl(?:pat|oas|dt|rtr|rt|cbt|ptt|ft|imt|agent|wt|soat|ffct)-[A-Za-z0-9_-]{20,}/' => '[REDACTED]',
+            // A bearer value outside a header, when it looks like a credential rather than a word.
+            '/\b(bearer\s+)(?=[A-Za-z0-9._~+\/-]*\d)[A-Za-z0-9._~+\/-]{16,}=*/i' => '${1}[REDACTED]',
+            // Userinfo in a URL: https://user:secret@host.
+            '/https?:\/\/[^\/@\s]+@/' => '[REDACTED]',
+        ];
+
+        return preg_replace(array_keys($patterns), array_values($patterns), $message) ?? $message;
     }
 }

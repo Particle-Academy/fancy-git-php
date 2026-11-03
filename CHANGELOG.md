@@ -25,6 +25,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **What you must do:** nothing. Only a script that looks runs up by the old
   file (`gh run list --workflow=release-gate.yml`) needs `publish.yml` instead.
 
+### Security
+
+- **`SymfonyProcessRunner` now runs `git` by absolute path, and on Windows no
+  longer goes through `cmd.exe`.** Which program ran could depend on the current
+  directory, so a repository could decide what ran when a process was started
+  inside it. The runner now finds `git` on `PATH` once per process, reading only
+  absolute entries, and never the current directory or the repository. If it finds
+  none it fails with a `GitException` (`NotFound`) rather than falling back.
+
+  On Windows it now starts the program directly with `proc_open` instead of through
+  Symfony Process, because Symfony's own `cmd.exe` and `taskkill` lookups had the
+  same exposure. POSIX still uses Symfony Process.
+
+  **What you must do:** nothing, unless one of these applies:
+  - The only `git` you have is in the current directory or on a relative `PATH`
+    entry. Add it to `PATH` by absolute path, or pass a `ProcessRunner` that calls
+    your own copy.
+  - On Windows, your first `git` on `PATH` is a `.cmd` or `.bat` wrapper. It is no
+    longer run. A real `git.exe` later on `PATH` is used instead; with none, you
+    get a `NotFound` error that names the wrapper.
+  - You run under `open_basedir` and `git` is outside it. POSIX keeps working when
+    every `PATH` entry is absolute. Otherwise you get a `NotFound` error, and need
+    a `ProcessRunner` that calls `git` by absolute path.
+
+  A custom `ProcessRunner` keeps working unchanged: it still receives the name
+  `git`.
+
 ## [0.3.1] — 2026-09-13
 
 ### Fixed

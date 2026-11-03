@@ -13,6 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GitRepository::log()` and `branches()` threw a `TypeError` on every non-empty
+  result, on every platform, since the first release.** git ends each record with
+  the separator and then a newline, and that leftover newline was parsed as a row.
+  Records now split on the separator and its newline, and nothing else is trimmed,
+  so a subject keeps its own trailing characters. CRLF output and a final record
+  without its newline are accepted. Output that is not a record is now a
+  `GitException` rather than a `TypeError`. The `git-log` and `git-branches` flow
+  nodes call these methods and failed the same way, so they work once this version
+  is installed.
+
+  **What you must do:** nothing. These calls could not succeed on a non-empty
+  result before, so no working code depends on the old behaviour.
+
+- **Text in a commit can no longer forge fields or commits in `log()`.** An author
+  name or a subject can contain the separators `log()` used, so a commit could shift
+  its own fields or add a row with an id of its choosing. Fields are now separated
+  by NUL, which a commit cannot contain.
+
+  **What you must do:** nothing, unless you assert on the exact command through a
+  custom `ProcessRunner`, in which case the `--format` argument has changed.
+
+- **`status()` lost a file when a file named `0` was renamed.** The `0` was filtered
+  out as if it were empty, so the next record was taken as the previous path and
+  that file vanished from the result.
+
+  **What you must do:** nothing.
+
 ## [0.4.0] - 2026-11-03
 
 ### Changed

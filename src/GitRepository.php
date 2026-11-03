@@ -19,6 +19,14 @@ final class GitRepository
     private const FIELD = "\x1f";
     private const RECORD = "\x1e";
 
+    /**
+     * log() prints text a repository's authors chose, and an author name or a
+     * subject can hold FIELD or RECORD, so a commit could forge fields. A commit
+     * cannot hold NUL. git spells it %x00 in the format, since an argument cannot
+     * carry one. Ref names cannot hold control characters, so branches() keeps FIELD.
+     */
+    private const LOG_FIELD = "\0";
+
     public readonly string $directory;
 
     public function __construct(string $directory, private ?ProcessRunner $runner = null)
@@ -43,7 +51,8 @@ final class GitRepository
 
     public function status(?float $timeout = null): WorkingTreeStatus
     {
-        $records = array_values(array_filter(explode("\0", $this->git(['status', '--porcelain=v2', '--branch', '-z'], $timeout))));
+        // Not a bare array_filter(): that also drops "0", which is a real path when a file of that name is renamed.
+        $records = array_values(array_filter(explode("\0", $this->git(['status', '--porcelain=v2', '--branch', '-z'], $timeout)), static fn (string $record): bool => $record !== ''));
         $branch = $upstream = null;
         $ahead = $behind = 0;
         $files = [];
@@ -78,20 +87,18 @@ final class GitRepository
     /** @return list<Commit> */
     public function log(?string $ref = null, int $limit = 50, int $skip = 0, ?float $timeout = null): array
     {
-        $format = implode(self::FIELD, ['%H', '%h', '%P', '%an', '%ae', '%aI', '%s']).self::RECORD;
+        $format = implode('%x00', ['%H', '%h', '%P', '%an', '%ae', '%aI', '%s']).self::RECORD;
         $args = ['log', "--format={$format}", "--max-count={$limit}", "--skip={$skip}"];
         if ($ref !== null) {
             self::assertNotOption($ref, 'log ref');
             $args[] = $ref;
         }
 
-        $rows = array_filter(explode(self::RECORD, $this->git($args, $timeout)), 'strlen');
-
-        return array_values(array_map(static function (string $row): Commit {
-            [$id, $shortId, $parents, $authorName, $authorEmail, $authoredAt, $subject] = explode(self::FIELD, trim($row));
+        return array_map(static function (string $record): Commit {
+            [$id, $shortId, $parents, $authorName, $authorEmail, $authoredAt, $subject] = self::fields($record, self::LOG_FIELD, 7);
 
             return new Commit($id, $shortId, $parents === '' ? [] : explode(' ', $parents), $authorName, $authorEmail, $authoredAt, $subject);
-        }, $rows));
+        }, self::records($this->git($args, $timeout)));
     }
 
     /** @param list<string> $paths */
@@ -142,17 +149,17 @@ final class GitRepository
     public function branches(?float $timeout = null): array
     {
         $format = implode(self::FIELD, ['%(refname:short)', '%(HEAD)', '%(objectname)', '%(upstream:short)', '%(refname)']).self::RECORD;
-        $rows = array_filter(explode(self::RECORD, $this->git(['for-each-ref', "--format={$format}", 'refs/heads', 'refs/remotes'], $timeout)), 'strlen');
+        $output = $this->git(['for-each-ref', "--format={$format}", 'refs/heads', 'refs/remotes'], $timeout);
 
-        return array_values(array_map(static function (string $row): array {
-            [$name, $head, $target, $upstream, $refname] = explode(self::FIELD, trim($row));
+        return array_map(static function (string $record): array {
+            [$name, $head, $target, $upstream, $refname] = self::fields($record, self::FIELD, 5);
             $branch = ['name' => $name, 'current' => $head === '*', 'remote' => str_starts_with($refname, 'refs/remotes/'), 'target' => $target];
             if ($upstream !== '') {
                 $branch['upstream'] = $upstream;
             }
 
             return $branch;
-        }, $rows));
+        }, self::records($output));
     }
 
     public function checkout(string $target, bool $propose = false, ?float $timeout = null): ?OperationProposal
@@ -223,6 +230,40 @@ final class GitRepository
         // invocation so a transport helper can never execute a command even if
         // a future call path forgets to validate its remote.
         return $this->runner->run(['git', '-c', 'protocol.ext.allow=never', '-C', $this->directory, '--no-pager', ...$args], $timeout)->stdout;
+    }
+
+    /**
+     * git ends every line of a --format with its own newline, so a record really
+     * ends in RECORD plus a newline: splitting on RECORD alone leaves that newline
+     * behind as a row. The pair is unambiguous, because the only free text before
+     * it is single-line. Nothing else is trimmed, so a record's own text survives.
+     * A runner may hand back CRLF, or a final record without its newline.
+     *
+     * @return list<string>
+     */
+    private static function records(string $output): array
+    {
+        $output = str_replace(self::RECORD."\r\n", self::RECORD."\n", $output);
+        if (str_ends_with($output, self::RECORD)) {
+            $output .= "\n";
+        }
+
+        return array_values(array_filter(explode(self::RECORD."\n", $output), static fn (string $record): bool => $record !== ''));
+    }
+
+    /**
+     * Limited to $count so the last field keeps any separator of its own.
+     *
+     * @return list<string>
+     */
+    private static function fields(string $record, string $separator, int $count): array
+    {
+        $fields = explode($separator, $record, $count);
+        if (count($fields) !== $count) {
+            throw new GitException(GitErrorCode::Unknown, sprintf('Unexpected git output: expected %d fields in a record, found %d.', $count, count($fields)));
+        }
+
+        return $fields;
     }
 
     /**

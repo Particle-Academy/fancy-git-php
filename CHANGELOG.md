@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rebranded the display name to Fancy Dev Kit (README and package description). Package names, the npm scope, URLs and the `fancy-ui` MCP id are unchanged.
 - **Docs:** `AGENTS.md` added: the guide to using this package (install, its entries on the Fancy MCP catalog server, API essentials, traps). `CONTRIBUTING.md` added for the contributor notes, with `CLAUDE.md` as a symlink to it. The README points to the MCP server and to `AGENTS.md`. No code changed; nothing to do.
 - CI: re-pin org third-party allowlist to 2614224
+- Tests moved to Pest (`^5.0`); `phpunit/phpunit` removed from require-dev (Pest brings it transitively). No runtime change. The lockfile holds Pest 5.1.0 so `symfony/process` stays at 8.1.0: Pest 5.3.7 needs 8.1.10, which resolves `cmd.exe` absolutely and stops the PATH-only control in `PlantedGitTest` ("a planted cmd exe does not run") from firing, so that test needs a decision before the lock moves.
 
 ## [0.4.1] - 2026-11-03
 

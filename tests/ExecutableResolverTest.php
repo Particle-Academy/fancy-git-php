@@ -7,7 +7,6 @@ namespace FancyGit\Tests;
 use FancyGit\Error\GitErrorCode;
 use FancyGit\Error\GitException;
 use FancyGit\Process\ExecutableResolver;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -15,7 +14,7 @@ use PHPUnit\Framework\TestCase;
  * and its file check as inputs. The cases are the same file in fancy-git-js and
  * change-council, so a behaviour change has to be made in all three.
  */
-final class ExecutableResolverTest extends TestCase
+abstract class ExecutableResolverCase extends TestCase
 {
     /** @return array<string, array{array<string, mixed>}> */
     public static function lookupCases(): array
@@ -28,31 +27,6 @@ final class ExecutableResolverTest extends TestCase
         }
 
         return $out;
-    }
-
-    #[DataProvider('lookupCases')]
-    public function test_lookup(array $case): void
-    {
-        $found = ExecutableResolver::find(
-            $case['name_to_find'],
-            $case['PATH'],
-            $case['PATHEXT'],
-            $case['platform'] === 'win32',
-            fn (string $path): bool => in_array($path, $case['files'], true),
-        );
-
-        self::assertSame($case['expect'], $found);
-    }
-
-    public function test_the_fixture_has_cases_to_run(): void
-    {
-        self::assertGreaterThan(20, count(self::lookupCases()));
-    }
-
-    #[DataProvider('absoluteCases')]
-    public function test_is_absolute(string $entry, bool $windows, bool $expected): void
-    {
-        self::assertSame($expected, ExecutableResolver::isAbsolute($entry, $windows));
     }
 
     /** @return list<array{string, bool, bool}> */
@@ -78,45 +52,62 @@ final class ExecutableResolverTest extends TestCase
         ];
     }
 
-    public function test_an_absolute_path_is_returned_as_given_so_a_host_can_name_its_own_git(): void
-    {
-        self::assertSame(PHP_BINARY, ExecutableResolver::resolve(PHP_BINARY));
-    }
-
-    #[DataProvider('relativeNames')]
-    public function test_a_relative_path_is_refused(string $name): void
-    {
-        try {
-            ExecutableResolver::resolve($name);
-            self::fail('expected a GitException');
-        } catch (GitException $e) {
-            self::assertSame(GitErrorCode::InvalidArgument, $e->errorCode);
-        }
-    }
-
     /** @return list<array{string}> */
     public static function relativeNames(): array
     {
         return [['./git'], ['bin/git'], ['..\\git'], ['bin\\git']];
     }
-
-    public function test_nothing_found_fails_closed_with_a_clear_error(): void
-    {
-        try {
-            ExecutableResolver::resolve('no-such-program-fancy-git');
-            self::fail('expected a GitException');
-        } catch (GitException $e) {
-            self::assertSame(GitErrorCode::NotFound, $e->errorCode);
-            self::assertStringContainsString('current directory is never used', $e->getMessage());
-        }
-    }
-
-    public function test_open_basedir_hiding_git_stays_a_bare_name_on_posix_only_when_path_is_all_absolute(): void
-    {
-        self::assertTrue(ExecutableResolver::bareNameIsSafe('/usr/bin:/bin', false));
-        self::assertFalse(ExecutableResolver::bareNameIsSafe('.:/usr/bin', false));
-        self::assertFalse(ExecutableResolver::bareNameIsSafe('/usr/bin:', false));
-        self::assertFalse(ExecutableResolver::bareNameIsSafe('', false));
-        self::assertFalse(ExecutableResolver::bareNameIsSafe('C:\\Git\\cmd', true));
-    }
 }
+
+uses(ExecutableResolverCase::class);
+
+test('lookup', function (array $case) {
+    $found = ExecutableResolver::find(
+        $case['name_to_find'],
+        $case['PATH'],
+        $case['PATHEXT'],
+        $case['platform'] === 'win32',
+        fn (string $path): bool => in_array($path, $case['files'], true),
+    );
+
+    self::assertSame($case['expect'], $found);
+})->with(ExecutableResolverCase::lookupCases());
+
+test('the fixture has cases to run', function () {
+    self::assertGreaterThan(20, count(self::lookupCases()));
+});
+
+test('is absolute', function (string $entry, bool $windows, bool $expected) {
+    self::assertSame($expected, ExecutableResolver::isAbsolute($entry, $windows));
+})->with(ExecutableResolverCase::absoluteCases());
+
+test('an absolute path is returned as given so a host can name its own git', function () {
+    self::assertSame(PHP_BINARY, ExecutableResolver::resolve(PHP_BINARY));
+});
+
+test('a relative path is refused', function (string $name) {
+    try {
+        ExecutableResolver::resolve($name);
+        self::fail('expected a GitException');
+    } catch (GitException $e) {
+        self::assertSame(GitErrorCode::InvalidArgument, $e->errorCode);
+    }
+})->with(ExecutableResolverCase::relativeNames());
+
+test('nothing found fails closed with a clear error', function () {
+    try {
+        ExecutableResolver::resolve('no-such-program-fancy-git');
+        self::fail('expected a GitException');
+    } catch (GitException $e) {
+        self::assertSame(GitErrorCode::NotFound, $e->errorCode);
+        self::assertStringContainsString('current directory is never used', $e->getMessage());
+    }
+});
+
+test('open basedir hiding git stays a bare name on posix only when path is all absolute', function () {
+    self::assertTrue(ExecutableResolver::bareNameIsSafe('/usr/bin:/bin', false));
+    self::assertFalse(ExecutableResolver::bareNameIsSafe('.:/usr/bin', false));
+    self::assertFalse(ExecutableResolver::bareNameIsSafe('/usr/bin:', false));
+    self::assertFalse(ExecutableResolver::bareNameIsSafe('', false));
+    self::assertFalse(ExecutableResolver::bareNameIsSafe('C:\\Git\\cmd', true));
+});

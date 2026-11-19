@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace FancyGit\Tests;
 
-use PHPUnit\Framework\Attributes\RequiresOperatingSystemFamily;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -15,24 +14,13 @@ use PHPUnit\Framework\TestCase;
  * ambient NoDefaultCurrentDirectoryInExePath is exactly that, so it is removed
  * from the child's environment and the child reports that it is gone.
  */
-final class PlantedGitTest extends TestCase
+abstract class PlantedGitCase extends TestCase
 {
-    private string $root;
+    protected string $root;
 
-    private static ?string $nodeCopy = null;
+    protected static ?string $nodeCopy = null;
 
-    protected function setUp(): void
-    {
-        $this->root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'fancy-git-plant-'.bin2hex(random_bytes(6));
-        mkdir($this->root);
-    }
-
-    protected function tearDown(): void
-    {
-        $this->remove($this->root);
-    }
-
-    private function remove(string $path): void
+    protected function remove(string $path): void
     {
         if (is_dir($path) && ! is_link($path)) {
             foreach (scandir($path) as $entry) {
@@ -47,7 +35,7 @@ final class PlantedGitTest extends TestCase
         unlink($path);
     }
 
-    private function dir(string $name): string
+    protected function dir(string $name): string
     {
         $dir = $this->root.DIRECTORY_SEPARATOR.$name;
         mkdir($dir);
@@ -56,12 +44,12 @@ final class PlantedGitTest extends TestCase
     }
 
     /** @return list<string> */
-    private function markers(string $dir): array
+    protected function markers(string $dir): array
     {
         return array_values(array_filter(scandir($dir), fn ($file) => str_ends_with($file, '.marker')));
     }
 
-    private function clearMarkers(string $dir): void
+    protected function clearMarkers(string $dir): void
     {
         foreach ($this->markers($dir) as $marker) {
             unlink($dir.DIRECTORY_SEPARATOR.$marker);
@@ -69,7 +57,7 @@ final class PlantedGitTest extends TestCase
     }
 
     /** Deliberately not the code under test. */
-    private function realGit(): string
+    protected function realGit(): string
     {
         $windows = PHP_OS_FAMILY === 'Windows';
         foreach (explode(PATH_SEPARATOR, (string) getenv('PATH')) as $dir) {
@@ -82,7 +70,7 @@ final class PlantedGitTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function probe(string $cwd, string $path, string $mode, array $extraEnv = [], array $args = []): array
+    protected function probe(string $cwd, string $path, string $mode, array $extraEnv = [], array $args = []): array
     {
         $env = getenv();
         foreach (array_keys($env) as $key) {
@@ -114,7 +102,7 @@ final class PlantedGitTest extends TestCase
         return $result;
     }
 
-    private function plantBatch(string $dir, string $name = 'git'): void
+    protected function plantBatch(string $dir, string $name = 'git'): void
     {
         file_put_contents(
             $dir.DIRECTORY_SEPARATOR.$name.'.cmd',
@@ -129,7 +117,7 @@ final class PlantedGitTest extends TestCase
      *
      * @return array<string, string> the environment that arms it
      */
-    private function plantExe(string $dir, string $name = 'git.exe'): array
+    protected function plantExe(string $dir, string $name = 'git.exe'): array
     {
         $node = $this->findNode();
         copy($node, $dir.DIRECTORY_SEPARATOR.$name);
@@ -147,7 +135,7 @@ JS);
         return ['NODE_OPTIONS' => '--require "'.str_replace('\\', '/', $script).'"'];
     }
 
-    private function findNode(): string
+    protected function findNode(): string
     {
         if (self::$nodeCopy !== null) {
             return self::$nodeCopy;
@@ -160,128 +148,23 @@ JS);
         self::markTestSkipped('the .exe plant is built from node, which is not on PATH');
     }
 
-    private function gitDir(): string
+    protected function gitDir(): string
     {
         return dirname($this->realGit());
     }
 
-    private function systemDir(): string
+    protected function systemDir(): string
     {
         return getenv('SystemRoot').'\\System32';
     }
 
-    private function phpDir(): string
+    protected function phpDir(): string
     {
         return dirname(PHP_BINARY);
     }
 
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_a_plant_on_dot_path_runs_under_a_bare_name_and_not_through_the_runner(): void
-    {
-        $cwd = $this->dir('cwd');
-        $env = $this->plantExe($cwd);
-        $path = '.;'.$this->gitDir();
-
-        $control = $this->probe($cwd, $path, 'bare', $env);
-        self::assertSame(7, $control['exit']);
-        self::assertSame(['ran-git.exe.marker'], $this->markers($cwd));
-        $this->clearMarkers($cwd);
-
-        $fixed = $this->probe($cwd, $path, 'runner', $env);
-        self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
-        self::assertSame([], $this->markers($cwd));
-    }
-
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_a_plant_on_an_empty_path_entry_runs_under_a_bare_name_and_not_through_the_runner(): void
-    {
-        $cwd = $this->dir('cwd');
-        $env = $this->plantExe($cwd);
-        $path = ';'.$this->gitDir();
-
-        self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit']);
-        self::assertSame(['ran-git.exe.marker'], $this->markers($cwd));
-        $this->clearMarkers($cwd);
-
-        $fixed = $this->probe($cwd, $path, 'runner', $env);
-        self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
-        self::assertSame([], $this->markers($cwd));
-    }
-
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_a_plant_on_a_relative_path_entry_is_not_searched(): void
-    {
-        $cwd = $this->dir('cwd');
-        $sub = $cwd.DIRECTORY_SEPARATOR.'sub';
-        mkdir($sub);
-        $env = $this->plantExe($sub);
-        $path = 'sub;'.$this->gitDir();
-
-        self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit']);
-        self::assertSame(['ran-git.exe.marker'], $this->markers($sub));
-        $this->clearMarkers($sub);
-
-        $fixed = $this->probe($cwd, $path, 'runner', $env);
-        self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
-        self::assertSame([], $this->markers($sub));
-    }
-
-    /** The shape that fires with no PATH trickery: git is simply not installed where PATH says. */
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_git_only_in_the_cwd_fails_closed(): void
-    {
-        foreach (['exe', 'cmd'] as $kind) {
-            $cwd = $this->dir('cwd-'.$kind);
-            $env = [];
-            if ($kind === 'exe') {
-                $env = $this->plantExe($cwd);
-            } else {
-                $this->plantBatch($cwd);
-            }
-            $path = $this->systemDir().';'.$this->phpDir();
-
-            self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit'], $kind);
-            self::assertNotSame([], $this->markers($cwd), $kind);
-            $this->clearMarkers($cwd);
-
-            $fixed = $this->probe($cwd, $path, 'runner', $env);
-            self::assertSame('not_found', $fixed['code'] ?? null, json_encode($fixed));
-            self::assertStringContainsString('current directory is never used', $fixed['message']);
-            self::assertSame([], $this->markers($cwd), $kind);
-        }
-    }
-
-    /** Symfony's own wrapper is a second lookup, so an absolute git alone does not close this. */
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_a_planted_cmd_exe_does_not_run(): void
-    {
-        $cwd = $this->dir('cwd');
-        $env = $this->plantExe($cwd, 'cmd.exe');
-
-        foreach (['.;'.$this->gitDir().';'.$this->systemDir(), ';'.$this->gitDir().';'.$this->systemDir(), $this->gitDir()] as $path) {
-            self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit'], $path);
-            self::assertSame(['ran-cmd.exe.marker'], $this->markers($cwd), $path);
-            $this->clearMarkers($cwd);
-
-            $fixed = $this->probe($cwd, $path, 'runner', $env);
-            self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
-            self::assertSame([], $this->markers($cwd), $path);
-        }
-    }
-
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_a_timed_out_command_does_not_run_a_planted_taskkill(): void
-    {
-        $cwd = $this->dir('cwd');
-        $env = $this->plantExe($cwd, 'taskkill.exe');
-
-        $out = $this->timeoutProbe($cwd, $env);
-        self::assertTrue($out['cancelled'], json_encode($out));
-        self::assertSame([], $this->markers($cwd));
-    }
-
     /** @return array<string, mixed> */
-    private function timeoutProbe(string $cwd, array $extraEnv): array
+    protected function timeoutProbe(string $cwd, array $extraEnv): array
     {
         $script = $this->root.DIRECTORY_SEPARATOR.'timeout.php';
         $autoload = var_export(dirname(__DIR__).'/vendor/autoload.php', true);
@@ -311,85 +194,7 @@ PHP);
         return json_decode((string) $stdout, true) ?? ['raw' => $stdout];
     }
 
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_an_absolute_path_entry_is_found_identified_by_the_plant_it_runs_there(): void
-    {
-        $onPath = $this->dir('on-path');
-        $cwd = $this->dir('cwd');
-        $env = $this->plantExe($onPath);
-
-        $out = $this->probe($cwd, $onPath.';'.$this->systemDir(), 'runner', $env);
-        self::assertSame(7, $out['exit'] ?? null, json_encode($out));
-        self::assertSame(['ran-git.exe.marker'], $this->markers($onPath));
-        self::assertSame([], $this->markers($cwd));
-    }
-
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_a_batch_file_git_on_path_fails_clearly_and_does_not_run(): void
-    {
-        $onPath = $this->dir('on-path');
-        $cwd = $this->dir('cwd');
-        $this->plantBatch($onPath);
-
-        $out = $this->probe($cwd, $onPath.';'.$this->systemDir(), 'runner');
-        self::assertSame('not_found', $out['code'] ?? null, json_encode($out));
-        self::assertStringContainsString('batch file', $out['message']);
-        self::assertSame([], $this->markers($onPath));
-    }
-
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_a_normal_repository_with_a_plant_inside_it_is_read_with_real_git(): void
-    {
-        $cwd = $this->dir('repo');
-        $env = $this->plantExe($cwd);
-        $this->initRepo($cwd);
-
-        // Empty entry first, so the old code would have taken the plant.
-        $out = $this->probe($cwd, ';'.getenv('PATH'), 'repo', $env);
-        self::assertSame(realpath($cwd), realpath($out['root'] ?? ''), json_encode($out));
-        self::assertSame([], $this->markers($cwd));
-    }
-
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_an_injected_runner_uses_its_own_git_and_still_receives_the_bare_name(): void
-    {
-        $cwd = $this->dir('repo');
-        $env = $this->plantExe($cwd);
-        $this->initRepo($cwd);
-
-        $out = $this->probe($cwd, $this->systemDir(), 'host', $env, [$this->realGit()]);
-        self::assertSame(realpath($cwd), realpath($out['root'] ?? ''), json_encode($out));
-        self::assertSame(['git'], $out['seen']);
-        self::assertSame([], $this->markers($cwd));
-    }
-
-    #[RequiresOperatingSystemFamily('Windows')]
-    public function test_success_is_cached_and_failure_is_not(): void
-    {
-        $cwd = $this->dir('cwd');
-
-        $cached = $this->probe($cwd, (string) getenv('PATH'), 'cached');
-        self::assertNotEmpty($cached['first'] ?? null, json_encode($cached));
-        self::assertSame($cached['first'], $cached['second']);
-
-        $failure = $this->probe($cwd, (string) getenv('PATH'), 'failure-not-cached');
-        self::assertTrue($failure['failed'] ?? null, json_encode($failure));
-        self::assertNotEmpty($failure['after'] ?? null);
-    }
-
-    #[RequiresOperatingSystemFamily('Linux')]
-    public function test_a_plant_on_a_dot_path_entry_is_not_searched_on_linux(): void
-    {
-        $this->posixPlantScenario();
-    }
-
-    #[RequiresOperatingSystemFamily('Darwin')]
-    public function test_a_plant_on_a_dot_path_entry_is_not_searched_on_macos(): void
-    {
-        $this->posixPlantScenario();
-    }
-
-    private function posixPlantScenario(): void
+    protected function posixPlantScenario(): void
     {
         $cwd = $this->dir('cwd');
         $script = $cwd.'/git';
@@ -410,7 +215,7 @@ PHP);
         self::assertSame([], $this->markers($cwd));
     }
 
-    private function initRepo(string $dir): void
+    protected function initRepo(string $dir): void
     {
         $process = proc_open(
             [$this->realGit(), 'init', '-q', $dir],
@@ -423,3 +228,171 @@ PHP);
         self::assertSame(0, proc_close($process));
     }
 }
+
+uses(PlantedGitCase::class);
+
+beforeEach(function () {
+    $this->root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'fancy-git-plant-'.bin2hex(random_bytes(6));
+    mkdir($this->root);
+});
+
+afterEach(function () {
+    $this->remove($this->root);
+});
+
+test('a plant on dot path runs under a bare name and not through the runner', function () {
+    $cwd = $this->dir('cwd');
+    $env = $this->plantExe($cwd);
+    $path = '.;'.$this->gitDir();
+
+    $control = $this->probe($cwd, $path, 'bare', $env);
+    self::assertSame(7, $control['exit']);
+    self::assertSame(['ran-git.exe.marker'], $this->markers($cwd));
+    $this->clearMarkers($cwd);
+
+    $fixed = $this->probe($cwd, $path, 'runner', $env);
+    self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
+    self::assertSame([], $this->markers($cwd));
+})->onlyOnWindows();
+
+test('a plant on an empty path entry runs under a bare name and not through the runner', function () {
+    $cwd = $this->dir('cwd');
+    $env = $this->plantExe($cwd);
+    $path = ';'.$this->gitDir();
+
+    self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit']);
+    self::assertSame(['ran-git.exe.marker'], $this->markers($cwd));
+    $this->clearMarkers($cwd);
+
+    $fixed = $this->probe($cwd, $path, 'runner', $env);
+    self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
+    self::assertSame([], $this->markers($cwd));
+})->onlyOnWindows();
+
+test('a plant on a relative path entry is not searched', function () {
+    $cwd = $this->dir('cwd');
+    $sub = $cwd.DIRECTORY_SEPARATOR.'sub';
+    mkdir($sub);
+    $env = $this->plantExe($sub);
+    $path = 'sub;'.$this->gitDir();
+
+    self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit']);
+    self::assertSame(['ran-git.exe.marker'], $this->markers($sub));
+    $this->clearMarkers($sub);
+
+    $fixed = $this->probe($cwd, $path, 'runner', $env);
+    self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
+    self::assertSame([], $this->markers($sub));
+})->onlyOnWindows();
+
+/** The shape that fires with no PATH trickery: git is simply not installed where PATH says. */
+test('git only in the cwd fails closed', function () {
+    foreach (['exe', 'cmd'] as $kind) {
+        $cwd = $this->dir('cwd-'.$kind);
+        $env = [];
+        if ($kind === 'exe') {
+            $env = $this->plantExe($cwd);
+        } else {
+            $this->plantBatch($cwd);
+        }
+        $path = $this->systemDir().';'.$this->phpDir();
+
+        self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit'], $kind);
+        self::assertNotSame([], $this->markers($cwd), $kind);
+        $this->clearMarkers($cwd);
+
+        $fixed = $this->probe($cwd, $path, 'runner', $env);
+        self::assertSame('not_found', $fixed['code'] ?? null, json_encode($fixed));
+        self::assertStringContainsString('current directory is never used', $fixed['message']);
+        self::assertSame([], $this->markers($cwd), $kind);
+    }
+})->onlyOnWindows();
+
+/** Symfony's own wrapper is a second lookup, so an absolute git alone does not close this. */
+test('a planted cmd exe does not run', function () {
+    $cwd = $this->dir('cwd');
+    $env = $this->plantExe($cwd, 'cmd.exe');
+
+    foreach (['.;'.$this->gitDir().';'.$this->systemDir(), ';'.$this->gitDir().';'.$this->systemDir(), $this->gitDir()] as $path) {
+        self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit'], $path);
+        self::assertSame(['ran-cmd.exe.marker'], $this->markers($cwd), $path);
+        $this->clearMarkers($cwd);
+
+        $fixed = $this->probe($cwd, $path, 'runner', $env);
+        self::assertStringStartsWith('git version ', $fixed['stdout'] ?? json_encode($fixed));
+        self::assertSame([], $this->markers($cwd), $path);
+    }
+})->onlyOnWindows();
+
+test('a timed out command does not run a planted taskkill', function () {
+    $cwd = $this->dir('cwd');
+    $env = $this->plantExe($cwd, 'taskkill.exe');
+
+    $out = $this->timeoutProbe($cwd, $env);
+    self::assertTrue($out['cancelled'], json_encode($out));
+    self::assertSame([], $this->markers($cwd));
+})->onlyOnWindows();
+
+test('an absolute path entry is found identified by the plant it runs there', function () {
+    $onPath = $this->dir('on-path');
+    $cwd = $this->dir('cwd');
+    $env = $this->plantExe($onPath);
+
+    $out = $this->probe($cwd, $onPath.';'.$this->systemDir(), 'runner', $env);
+    self::assertSame(7, $out['exit'] ?? null, json_encode($out));
+    self::assertSame(['ran-git.exe.marker'], $this->markers($onPath));
+    self::assertSame([], $this->markers($cwd));
+})->onlyOnWindows();
+
+test('a batch file git on path fails clearly and does not run', function () {
+    $onPath = $this->dir('on-path');
+    $cwd = $this->dir('cwd');
+    $this->plantBatch($onPath);
+
+    $out = $this->probe($cwd, $onPath.';'.$this->systemDir(), 'runner');
+    self::assertSame('not_found', $out['code'] ?? null, json_encode($out));
+    self::assertStringContainsString('batch file', $out['message']);
+    self::assertSame([], $this->markers($onPath));
+})->onlyOnWindows();
+
+test('a normal repository with a plant inside it is read with real git', function () {
+    $cwd = $this->dir('repo');
+    $env = $this->plantExe($cwd);
+    $this->initRepo($cwd);
+
+    // Empty entry first, so the old code would have taken the plant.
+    $out = $this->probe($cwd, ';'.getenv('PATH'), 'repo', $env);
+    self::assertSame(realpath($cwd), realpath($out['root'] ?? ''), json_encode($out));
+    self::assertSame([], $this->markers($cwd));
+})->onlyOnWindows();
+
+test('an injected runner uses its own git and still receives the bare name', function () {
+    $cwd = $this->dir('repo');
+    $env = $this->plantExe($cwd);
+    $this->initRepo($cwd);
+
+    $out = $this->probe($cwd, $this->systemDir(), 'host', $env, [$this->realGit()]);
+    self::assertSame(realpath($cwd), realpath($out['root'] ?? ''), json_encode($out));
+    self::assertSame(['git'], $out['seen']);
+    self::assertSame([], $this->markers($cwd));
+})->onlyOnWindows();
+
+test('success is cached and failure is not', function () {
+    $cwd = $this->dir('cwd');
+
+    $cached = $this->probe($cwd, (string) getenv('PATH'), 'cached');
+    self::assertNotEmpty($cached['first'] ?? null, json_encode($cached));
+    self::assertSame($cached['first'], $cached['second']);
+
+    $failure = $this->probe($cwd, (string) getenv('PATH'), 'failure-not-cached');
+    self::assertTrue($failure['failed'] ?? null, json_encode($failure));
+    self::assertNotEmpty($failure['after'] ?? null);
+})->onlyOnWindows();
+
+test('a plant on a dot path entry is not searched on linux', function () {
+    $this->posixPlantScenario();
+})->onlyOnLinux();
+
+test('a plant on a dot path entry is not searched on macos', function () {
+    $this->posixPlantScenario();
+})->onlyOnMac();

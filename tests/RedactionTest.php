@@ -6,7 +6,6 @@ namespace FancyGit\Tests;
 
 use FancyGit\Error\GitErrorCode;
 use FancyGit\Error\GitException;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -17,15 +16,15 @@ use PHPUnit\Framework\TestCase;
  * held to the same table. `{}` splits token-shaped fakes so secret scanners do
  * not flag the file, and is removed here before use.
  */
-final class RedactionTest extends TestCase
+abstract class RedactionCase extends TestCase
 {
     /** @return array{redacts: list<array{id: string, input: string, expected: string}>, keeps: list<array{id: string, input: string}>} */
-    private static function table(): array
+    protected static function table(): array
     {
         return json_decode((string) file_get_contents(__DIR__.'/fixtures/redaction-cases.json'), true, 16, JSON_THROW_ON_ERROR);
     }
 
-    private static function unsplit(string $value): string
+    protected static function unsplit(string $value): string
     {
         return str_replace('{}', '', $value);
     }
@@ -45,28 +44,25 @@ final class RedactionTest extends TestCase
             yield $case['id'] => [self::unsplit($case['input'])];
         }
     }
-
-    #[DataProvider('secrets')]
-    public function test_it_redacts_a_real_secret(string $input, string $expected): void
-    {
-        $redacted = GitException::redact($input);
-
-        self::assertSame($expected, $redacted);
-        self::assertStringContainsString('[REDACTED]', $redacted);
-    }
-
-    #[DataProvider('ordinaryText')]
-    public function test_it_keeps_ordinary_provider_text_intact(string $input): void
-    {
-        self::assertSame($input, GitException::redact($input));
-    }
-
-    public function test_it_is_applied_to_every_git_exception_message(): void
-    {
-        $token = self::unsplit('gl{}pat-FAKEfakeFAKEfake1234');
-
-        self::assertSame('PRIVATE-TOKEN: [REDACTED]', (new GitException(GitErrorCode::Auth, "PRIVATE-TOKEN: {$token}"))->getMessage());
-        self::assertStringNotContainsString($token, GitException::fromOutput("fatal: Authentication failed for 'https://oauth2:{$token}@gitlab.com/a/b.git/'")->getMessage());
-        self::assertSame('Token scope insufficient', (new GitException(GitErrorCode::Auth, 'Token scope insufficient'))->getMessage());
-    }
 }
+
+uses(RedactionCase::class);
+
+test('it redacts a real secret', function (string $input, string $expected) {
+    $redacted = GitException::redact($input);
+
+    self::assertSame($expected, $redacted);
+    self::assertStringContainsString('[REDACTED]', $redacted);
+})->with(RedactionCase::secrets());
+
+test('it keeps ordinary provider text intact', function (string $input) {
+    self::assertSame($input, GitException::redact($input));
+})->with(RedactionCase::ordinaryText());
+
+test('it is applied to every git exception message', function () {
+    $token = self::unsplit('gl{}pat-FAKEfakeFAKEfake1234');
+
+    self::assertSame('PRIVATE-TOKEN: [REDACTED]', (new GitException(GitErrorCode::Auth, "PRIVATE-TOKEN: {$token}"))->getMessage());
+    self::assertStringNotContainsString($token, GitException::fromOutput("fatal: Authentication failed for 'https://oauth2:{$token}@gitlab.com/a/b.git/'")->getMessage());
+    self::assertSame('Token scope insufficient', (new GitException(GitErrorCode::Auth, 'Token scope insufficient'))->getMessage());
+});

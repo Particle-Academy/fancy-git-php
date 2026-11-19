@@ -13,7 +13,7 @@ works in this repo.
 - `src/Provider/` — the `GitProvider` / `IssueProvider` contracts and
   `ProviderRegistry`.
 - `src/Model/`, `src/Error/` — value objects, `GitException`, `GitErrorCode`.
-- `tests/` — the PHPUnit suite; `tests/StubProcessRunner.php` is the test
+- `tests/` — the Pest suite; `tests/StubProcessRunner.php` is the test
   double, fixtures in `tests/fixtures/`.
 
 ## Invariants
@@ -30,7 +30,7 @@ works in this repo.
 
 ```bash
 composer install
-composer test   # phpunit
+composer test   # pest
 ```
 
 ## Changelog

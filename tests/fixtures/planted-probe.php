@@ -25,6 +25,32 @@ try {
             $out += ['exit' => $process->getExitCode(), 'stdout' => $process->getOutput()];
             break;
 
+        case 'vulnerable':
+            // A deliberately vulnerable runner this suite owns, so a control does
+            // not depend on how any library resolves names. proc_open with a bare,
+            // relative executable name and no shell: Windows' CreateProcess then
+            // searches the current directory (the ambient opt-out is removed from
+            // this process's environment) and PATH, which is exactly the lookup
+            // a planted executable exploits. The arguments are the executable name
+            // followed by its arguments, e.g. `vulnerable cmd /D /C git version`.
+            $command = array_slice($argv, 2);
+            $process = proc_open(
+                $command,
+                [0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $pipes,
+                null,
+                null,
+                ['bypass_shell' => true],
+            );
+            if (! is_resource($process)) {
+                throw new RuntimeException('proc_open failed for '.implode(' ', $command));
+            }
+            $stdout = stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $out += ['exit' => proc_close($process), 'stdout' => $stdout];
+            break;
+
         case 'runner':
             $out += ['stdout' => (new SymfonyProcessRunner)->run(['git', 'version'])->stdout];
             break;

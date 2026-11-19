@@ -308,13 +308,21 @@ test('git only in the cwd fails closed', function () {
     }
 })->onlyOnWindows();
 
-/** Symfony's own wrapper is a second lookup, so an absolute git alone does not close this. */
+/**
+ * Symfony's own wrapper is a second lookup, so an absolute git alone does not close this.
+ *
+ * The control is the suite's own vulnerable runner (a bare `cmd` through
+ * proc_open), not symfony/process: from 8.1.10 Symfony resolves cmd.exe by full
+ * path itself, and a control borrowed from it would silently stop firing. The
+ * control's job is to prove THIS environment would run the plant, whatever any
+ * library version does.
+ */
 test('a planted cmd exe does not run', function () {
     $cwd = $this->dir('cwd');
     $env = $this->plantExe($cwd, 'cmd.exe');
 
     foreach (['.;'.$this->gitDir().';'.$this->systemDir(), ';'.$this->gitDir().';'.$this->systemDir(), $this->gitDir()] as $path) {
-        self::assertSame(7, $this->probe($cwd, $path, 'bare', $env)['exit'], $path);
+        self::assertSame(7, $this->probe($cwd, $path, 'vulnerable', $env, ['cmd', '/D', '/C', 'git', 'version'])['exit'], $path);
         self::assertSame(['ran-cmd.exe.marker'], $this->markers($cwd), $path);
         $this->clearMarkers($cwd);
 
